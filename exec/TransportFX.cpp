@@ -31,6 +31,11 @@
 #include <jack/jack.h>
 #include <jack/transport.h>
 
+#include <5FX/nsmwrap.hpp>
+#include <iostream>
+#include <thread>
+#include <chrono>
+
  /* Use a copy of the readline macro whitespace if it does not exist.
   * Not all readline compatible libraries supply the whitespace macro
   * (libedit for example), so pull in the copy in those cases too. */
@@ -51,6 +56,9 @@ float time_beat_type = 4.0;
 double time_ticks_per_beat = 1920.0;
 double time_beats_per_minute = 120.0;
 volatile int time_reset = 1;		/* true when time values change */
+
+sfx::nsm::Session session;
+std::atomic_flag run;
 
 /* JACK timebase callback.
  *
@@ -118,18 +126,12 @@ static void timebase(jack_transport_state_t state, jack_nframes_t nframes,
 
 static void jack_shutdown(void* arg)
 {
-#if defined(RL_READLINE_VERSION) && RL_READLINE_VERSION >= 0x0400
-  rl_cleanup_after_signal();
-#endif
-  fprintf(stderr, "JACK shut down, exiting ...\n");
-  exit(1);
+  run.clear();
 }
 
 static void signal_handler(int sig)
 {
-  jack_client_close(client);
-  fprintf(stderr, "signal received, exiting ...\n");
-  exit(0);
+  run.clear();
 }
 
 /* Command functions: see commands[] table following. */
@@ -464,7 +466,7 @@ static void command_loop()
 #if HAVE_READLINE
     free(line);		/* realine() called malloc() */
 #endif
-  }
+    }
 }
 
 int main(int argc, char* argv[])
@@ -478,8 +480,19 @@ int main(int argc, char* argv[])
   else
     package++;
 
+  if (auto tmp = sfx::nsm::try_connect_to_server("TransportFX", argv[0]); tmp.has_value()) {
+    session = std::move(tmp.value());
+    std::cout << "Start under NSM at : " << session.nsm_server->url() << std::endl;
+  } else {
+    session.nsm_server = nullptr;
+    session.osc_server = nullptr;
+    session.instance_path = "";
+    session.client_id = package;
+    session.display_name = "Jack-Transport";
+  }
+
   /* open a connection to the JACK server */
-  client = jack_client_open(package, JackNullOption, &status);
+  client = jack_client_open(session.client_id.c_str(), JackNullOption, &status);
   if (client == NULL) {
     fprintf(stderr, "jack_client_open() failed, "
       "status = 0x%2.0x\n", status);
@@ -501,8 +514,15 @@ int main(int argc, char* argv[])
   }
 
   /* execute commands until done */
+  if (session.nsm_server) {
+    run.test_and_set();
+    while (run.test_and_set()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  } else {
   command_loop();
-
+  }
+    
   jack_client_close(client);
   exit(0);
 }
