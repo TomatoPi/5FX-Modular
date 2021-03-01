@@ -60,6 +60,9 @@ volatile int time_reset = 1;		/* true when time values change */
 sfx::nsm::Session session;
 std::atomic_flag run;
 
+std::unique_ptr<lo::Address> gui_url;
+std::unique_ptr<std::string> gui_path;
+
 /* JACK timebase callback.
  *
  * Runs in the process thread.  Realtime, must not wait.
@@ -483,6 +486,40 @@ int main(int argc, char* argv[])
   if (auto tmp = sfx::nsm::try_connect_to_server("TransportFX", argv[0]); tmp.has_value()) {
     session = std::move(tmp.value());
     std::cout << "Start under NSM at : " << session.nsm_server->url() << std::endl;
+    std::cout << "OSC at : " << session.osc_server->url() << std::endl;
+
+    session.osc_server->add_method(
+      "/5fx/transport/locate", "i",
+      [](lo_arg** argv, int) -> void {
+        jack_transport_locate(client, argv[0]->i);
+      });
+
+    session.osc_server->add_method(
+      "/5fx/transport/bpm", "f",
+      [](lo_arg** argv, int) -> void {
+        time_beats_per_minute = argv[0]->f;
+        time_reset = 1;
+      });
+
+    session.osc_server->add_method(
+      "/5fx/transport/play", "",
+      [](lo_arg** argv, int) -> void {
+        jack_transport_start(client);
+      });
+    session.osc_server->add_method(
+      "/5fx/transport/stop", "",
+      [](lo_arg** argv, int) -> void {
+        jack_transport_stop(client);
+      });
+
+    session.osc_server->add_method(
+      "/5fx/transport/status", "ss",
+      [](lo_arg** argv, int) -> void {
+        gui_url = std::make_unique<lo::Address>(std::string(&argv[0]->s));
+        gui_path = std::make_unique<std::string>(&argv[1]->s);
+        std::cout << "Gui registered at : " << gui_url->url() << " " << *gui_path << std::endl;
+    });
+
   } else {
     session.nsm_server = nullptr;
     session.osc_server = nullptr;
@@ -513,10 +550,21 @@ int main(int argc, char* argv[])
     return 1;
   }
 
+  if (jack_set_timebase_callback(client, false, timebase, NULL) != 0)
+    fprintf(stderr, "Unable to take over timebase.\n");
+
+  time_beats_per_minute = 120;
+  time_reset = 1;
+
   /* execute commands until done */
   if (session.nsm_server) {
     run.test_and_set();
     while (run.test_and_set()) {
+      if (gui_url) {
+        jack_position_t current;
+        jack_transport_state_t transport_state = jack_transport_query(client, &current);
+        gui_url->send(*gui_path, "iiii", static_cast<int>(transport_state), current.bar, current.beat, current.tick);
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
   } else {
