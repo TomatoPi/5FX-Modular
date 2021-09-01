@@ -469,7 +469,7 @@ static void command_loop()
 #if HAVE_READLINE
     free(line);		/* realine() called malloc() */
 #endif
-    }
+  }
 }
 
 int main(int argc, char* argv[])
@@ -490,35 +490,40 @@ int main(int argc, char* argv[])
 
     session.osc_server->add_method(
       "/5fx/transport/locate", "i",
-      [](lo_arg** argv, int) -> void {
+      [](lo_arg** argv, int) -> void
+      {
         jack_transport_locate(client, argv[0]->i);
       });
 
     session.osc_server->add_method(
       "/5fx/transport/bpm", "f",
-      [](lo_arg** argv, int) -> void {
+      [](lo_arg** argv, int) -> void
+      {
         time_beats_per_minute = argv[0]->f;
         time_reset = 1;
       });
 
     session.osc_server->add_method(
       "/5fx/transport/play", "",
-      [](lo_arg** argv, int) -> void {
+      [](lo_arg** argv, int) -> void
+      {
         jack_transport_start(client);
       });
     session.osc_server->add_method(
       "/5fx/transport/stop", "",
-      [](lo_arg** argv, int) -> void {
+      [](lo_arg** argv, int) -> void
+      {
         jack_transport_stop(client);
       });
 
     session.osc_server->add_method(
       "/5fx/transport/status", "ss",
-      [](lo_arg** argv, int) -> void {
+      [](lo_arg** argv, int) -> void
+      {
         gui_url = std::make_unique<lo::Address>(std::string(&argv[0]->s));
         gui_path = std::make_unique<std::string>(&argv[1]->s);
         std::cout << "Gui registered at : " << gui_url->url() << " " << *gui_path << std::endl;
-    });
+      });
 
   } else {
     session.nsm_server = nullptr;
@@ -556,6 +561,10 @@ int main(int argc, char* argv[])
   time_beats_per_minute = 120;
   time_reset = 1;
 
+  if (session.nsm_server) {
+    session.nsm_server->send("/reply", "ss", "/nsm/client/open", "OK");
+  }
+
   /* execute commands until done */
   if (session.nsm_server) {
     run.test_and_set();
@@ -568,9 +577,9 @@ int main(int argc, char* argv[])
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
   } else {
-  command_loop();
+    command_loop();
   }
-    
+
   jack_client_close(client);
   exit(0);
 }
